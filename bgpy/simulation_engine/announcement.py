@@ -40,6 +40,7 @@ class Announcement(YamlAble):
     # NOTE: this is the opposite direction of next_hop, for the data plane
     bgpsec_next_asn: int | None = None
     bgpsec_as_path: tuple[int, ...] = ()
+    bgpsec_signatures: tuple[bytes, ...] | None = None
     # RFC 9234 OTC attribute (Used in OnlyToCustomers Policy)
     only_to_customers: int | None = None
     # ROV++ attribute
@@ -75,7 +76,6 @@ class Announcement(YamlAble):
         self, overwrite_default_kwargs: dict[Any, Any] | None = None
     ) -> "Announcement":
         """Creates a new ann with proper sim attrs"""
-
         if overwrite_default_kwargs:
             # Mypy says it gets this wrong
             # https://github.com/microsoft/pyright/issues/1047#issue-705124399

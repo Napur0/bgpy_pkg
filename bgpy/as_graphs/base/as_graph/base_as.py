@@ -9,6 +9,12 @@ if TYPE_CHECKING:
 
     from .as_graph import ASGraph
 
+### import ecdsa
+from ecdsa import SigningKey, VerifyingKey, SECP256k1
+import hashlib
+from bgpy.simulation_engine.policies.bgpsecCrypt.bgpseccrypt import BGPSecCrypt
+
+
 
 @yaml_info(yaml_tag="AS")
 class AS(YamlAble):
@@ -34,6 +40,8 @@ class AS(YamlAble):
         propagation_rank: int | None = None,
         policy: Optional["Policy"] = None,
         as_graph: Optional["ASGraph"] = None,
+        signing_key: SigningKey | None = None,
+        verifying_key: VerifyingKey | None = None,
     ) -> None:
         # Make sure you're not accidentally passing in a string here
         self.asn: int = int(asn)
@@ -60,9 +68,20 @@ class AS(YamlAble):
         # Hash in advance and only once since this gets called a lot
         self.hashed_asn = hash(self.asn)
 
+        self._policy: Optional["Policy"] = None
+
         assert policy, "This should never be None"
         self.policy: Policy = policy
         self.policy.as_ = proxy(self)
+        self.signing_key: SigningKey | None = None
+        self.verifying_key: VerifyingKey | None = None   
+
+        if(isinstance(self.policy, BGPSecCrypt)):
+            self.signing_key = SigningKey.generate(curve=SECP256k1, hashfunc=hashlib.sha256)
+        ###print(f"DEBUG - Key: {self.signing_key}; Policy: {self.policy.name}")
+        
+        if signing_key is not None:
+            self.verifying_key = signing_key.get_verifying_key()
 
         # # This is useful for some policies to have knowledge of the graph
         if as_graph is not None:
@@ -126,6 +145,8 @@ class AS(YamlAble):
             "propagation_rank",
             # Don't forget the properties
             *("stubs", "stub", "multihomed", "transit"),
+            "signing_key",
+            "verifying_key",
         )
 
     def __str__(self):
@@ -191,6 +212,8 @@ class AS(YamlAble):
             "as_rank": self.as_rank,
             "propagation_rank": self.propagation_rank,
             "policy": self.policy,
+            "signing_key": self.signing_key,
+            "verifying_key": self.verifying_key,
         }
 
     @classmethod
@@ -206,6 +229,23 @@ class AS(YamlAble):
             dct["provider_cone_asns"] = frozenset(dct["provider_cone_asns"])
         return cls(**dct)
 
+
+    ######################################
+    # Funcs for adjusting policy mid sim #
+    ######################################
+
+    @property
+    def policy(self) -> Optional["Policy"]:
+        return self._policy
+
+    @policy.setter
+    def policy(self, value: Optional["Policy"]) -> None:
+        self._policy = value
+
+        if isinstance(value, BGPSecCrypt) and self.signing_key is None:
+            self.signing_key = SigningKey.generate(curve=SECP256k1, hashfunc=hashlib.sha256)
+            ###print(f"DEBUG - Key: {self.signing_key}; Policy: {self.policy}")
+            self.verifying_key = self.signing_key.get_verifying_key()
 
 # Needed for mypy type hinting
 __all__ = ["AS"]

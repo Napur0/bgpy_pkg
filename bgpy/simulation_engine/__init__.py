@@ -54,6 +54,7 @@ from .policies import (
     ROVPPV2Lite,
     ROVPPV2LiteFull,
     ShortestPathPrefixASPAAttacker,
+    BGPSecCrypt,
 )
 from .simulation_engines import BaseSimulationEngine, SimulationEngine
 
@@ -115,4 +116,5 @@ __all__ = [
     "FirstASNStrippingPrefixASPAAttacker",
     "BaseSimulationEngine",
     "SimulationEngine",
+    "BGPSecCrypt",
 ]

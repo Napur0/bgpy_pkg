@@ -39,6 +39,8 @@ from .rovpp import (
     ROVPPV2LiteFull,
 )
 
+from .bgpsecCrypt import BGPSecCrypt
+
 __all__ = [
     "BGP",
     "BGPFull",
@@ -90,4 +92,5 @@ __all__ = [
     "ASPAwNFull",
     "ShortestPathPrefixASPAAttacker",
     "FirstASNStrippingPrefixASPAAttacker",
+    "BGPSecCrypt"
 ]
