@@ -42,49 +42,65 @@ class BGPSecCrypt(ROV):
         """Returns whether or not an announcement is valid by BGPSec"""
         return ann.bgpsec_next_asn == asn and ann.bgpsec_as_path == ann.as_path
 
-    def bgpsec_signatures_valid(self, ann: "Ann", asn: int, sendAS: "AS") -> bool:
+    def bgpsec_signatures_valid(self, ann: "Ann", asn: int) -> bool:
         """Returns whether or not an announcement is cryptograpically valid by BGPSec"""
-        if(ann.as_path == (self.as_.asn,)): ### assumes announcement has as_path length of 1 when just seeded or otherwise more than just own asn in as_path
+        if(ann.as_path == (asn,)): ### assumes announcement has as_path length of 1 when just seeded or otherwise more than just own asn in as_path
             return True  ### if only as self is in as_path, then announcement will not have signatures till propagation
         
         if(ann.bgpsec_signatures is None): ### "ann.bgpsec_signatures is not None" for indexing necessary"
             return False 
         
         as_path = ann.as_path
-        bgpsec_path = ann.bgpsec_as_path
         signatures = ann.bgpsec_signatures
         
         graph = self.as_.as_graph
         as_list = graph.ases
 
-        assert signatures.__len__ == bgpsec_path.__len__
-        for index, asns in enumerate(bgpsec_path):  ### bgpsec_as_path basically replaces SKI object from as path for ease of implementation with missing RPKI
+        prefix = ann.prefix ### stays the same for each signature
+
+
+        ### assumes announcement has as_path length of 1 when just seeded or otherwise more than just own asn in as_path
+        if len(signatures) == 0: 
+                assert ann.as_path == (asn,)
+                return True
+        
+        for index, sig in enumerate(signatures): 
             as_obj = None
             assert as_list is not None
-            for obj in as_list: ### enumerate as_graph to get object reference
-                if(obj.asn == asns):
+            ### enumerate as_graph to get object reference
+            for obj in as_list: 
+                if(obj.asn == as_path[index]):
                     as_obj = obj
                     break
             if(as_obj is None):
                 return False 
             
-
-            assert as_obj.asn in as_path
-            prefix = ann.prefix ### stays the same for each signature
-            sig = signatures[index] ### signature in index i corresponding to adopting AS with asn x at index i in bgpsec_as_path
-            as_pathI = (as_path[index],) + as_path[index:] ###TODO
-
-            if(not as_path[index:]):
-                own_hash = self.create_ann_hash(prefix=prefix, next_asn=as_path[index+1]); 
-            else:
-                signaturesI = signatures[index:]
-                
-                own_hash = self.create_ann_hash(prefix=prefix, next_asn=as_path[index+1], path=as_pathI, signatures=signaturesI)
+            ##########################
+            # Signature Verification #
+            ##########################
+            assert as_obj.asn in as_path ### should never error, but cleaner to check anyways
             
+            ### Length checking, since None is wanted instead of an empty tuple ()
+            if (len(as_path[index:]) > 0):
+                as_pathI = as_path[index:]
+            else:
+                as_pathI = None
+            if (len(signatures[index:]) > 1):
+                signaturesI = signatures[index+1:]
+            else:
+                signaturesI = None
 
-            if(as_obj.verify_signature(updatehash=own_hash, signature=sig) != True):        ### check signature for adopting as at index in path
+
+            if(index == 0):
+                next_asn=self.as_.asn
+            else:
+                next_asn=as_path[index-1]
+            own_hash = self.create_ann_hash(prefix=prefix, next_asn=next_asn, path=as_pathI, signatures=signaturesI)
+            
+            verification = as_obj.policy.verify_signature(updatehash=own_hash, signature=sig)
+            
+            if(verification != True):  ### check signature for adopting AS at index in path
                 return False
-    
         return True
 
 
@@ -109,7 +125,7 @@ class BGPSecCrypt(ROV):
                 sig_list = ann.bgpsec_signatures
                 sig = self.create_signature(self.create_ann_hash(ann.prefix, neighbor.asn, ann.as_path, sig_list)) ### creates signature over important attributes
                 if(sig_list):
-                    sig_list = (sig,) + sig_list
+                    sig_list = (sig, *sig_list)
                 else:
                     sig_list = (sig,)
             else: 
@@ -124,7 +140,6 @@ class BGPSecCrypt(ROV):
         self._process_outgoing_ann(neighbor, send_ann, propagate_to, send_rels)
         return True
 
-    ### TODO ?
     # Mypy doesn't understand the superclass
     def _copy_and_process(
         self,
@@ -136,16 +151,21 @@ class BGPSecCrypt(ROV):
 
         prepends ASN if valid, otherwise clears
         """
-        if self.bgpsec_valid( ann, self.as_.asn):
+        if (self.bgpsec_valid( ann, self.as_.asn) and self.bgpsec_signatures_valid(ann, self.as_.asn)):
             bgpsec_as_path = (self.as_.asn, *ann.bgpsec_as_path)
+            bgpsec_signatures = ann.bgpsec_signatures
         else:
             bgpsec_as_path = ()
+            bgpsec_signatures = None
 
         if overwrite_default_kwargs is None:
             overwrite_default_kwargs = {}
 
         overwrite_default_kwargs["bgpsec_as_path"] = overwrite_default_kwargs.get(
             "bgpsec_as_path", bgpsec_as_path
+        )
+        overwrite_default_kwargs["bgpsec_signatures"] = overwrite_default_kwargs.get(
+            "bgpsec_signatures", bgpsec_signatures
         )
 
         return super()._copy_and_process(
@@ -155,8 +175,8 @@ class BGPSecCrypt(ROV):
     def _get_best_ann_by_bgpsec(
         self, current_ann: "Ann", new_ann: "Ann"
     ) -> Optional["Ann"]:
-        current_valid = self.bgpsec_valid( current_ann, self.as_.asn)
-        new_valid = self.bgpsec_valid( new_ann, self.as_.asn)
+        current_valid = self.bgpsec_valid( current_ann, self.as_.asn) and self.bgpsec_signatures_valid(current_ann, self.as_.asn)
+        new_valid = self.bgpsec_valid( new_ann, self.as_.asn) and self.bgpsec_signatures_valid(new_ann, self.as_.asn)
 
         if current_valid and not new_valid:
             return current_ann
@@ -239,7 +259,7 @@ class BGPSecCrypt(ROV):
         self,
         hash: bytes,
     ):
-        assert isinstance(self.as_, AS) and isinstance(self.as_.policy, BGPSecCrypt) 
+        assert isinstance(self.as_, AS) and isinstance(self.as_.policy, BGPSecCrypt) and self.as_.signing_key
         return self.as_.signing_key.sign(hash)
     
     def verify_signature(
