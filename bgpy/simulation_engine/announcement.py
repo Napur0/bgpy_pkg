@@ -40,7 +40,7 @@ class Announcement(YamlAble):
     # NOTE: this is the opposite direction of next_hop, for the data plane
     bgpsec_next_asn: int | None = None
     bgpsec_as_path: tuple[int, ...] = ()
-    bgpsec_signatures: tuple[bytes, ...] | None = None
+    bgpsec_signatures: tuple[tuple[int, bytes], ...] | None = None
     # RFC 9234 OTC attribute (Used in OnlyToCustomers Policy)
     only_to_customers: int | None = None
     # ROV++ attribute
@@ -84,7 +84,7 @@ class Announcement(YamlAble):
             return replace(self)
 
     def __str__(self) -> str:
-        return f"{self.prefix} {self.as_path} {self.recv_relationship}"
+        return f"{self.prefix} {self.as_path} {self.recv_relationship} {self.bgpsec_signatures}"
 
     @property
     def origin(self) -> int:

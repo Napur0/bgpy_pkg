@@ -9,11 +9,17 @@ if TYPE_CHECKING:
 
     from .as_graph import ASGraph
 
-### import ecdsa
-from ecdsa import SigningKey, VerifyingKey, SECP256k1
-import hashlib
-from bgpy.simulation_engine.policies.bgpsecCrypt.bgpseccrypt import BGPSecCrypt
+### imports for cryptography
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey, EllipticCurvePublicKey
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 
+### imports for policy typechecking to avoid overhead by key creation when not needed
+from bgpy.simulation_engine import ( 
+    BGPSecCrypt,
+    BGPSecRSA,
+)
 
 
 @yaml_info(yaml_tag="AS")
@@ -40,8 +46,10 @@ class AS(YamlAble):
         propagation_rank: int | None = None,
         policy: Optional["Policy"] = None,
         as_graph: Optional["ASGraph"] = None,
-        signing_key: SigningKey | None = None,
-        verifying_key: VerifyingKey | None = None,
+        signing_key: EllipticCurvePrivateKey | None = None,
+        verifying_key: EllipticCurvePublicKey | None = None,
+        rsa_private_key: RSAPrivateKey | None = None,
+        rsa_public_key: RSAPublicKey | None = None,
     ) -> None:
         # Make sure you're not accidentally passing in a string here
         self.asn: int = int(asn)
@@ -73,15 +81,12 @@ class AS(YamlAble):
         assert policy, "This should never be None"
         self.policy: Policy = policy
         self.policy.as_ = proxy(self)
-        self.signing_key: SigningKey | None = None
-        self.verifying_key: VerifyingKey | None = None   
 
-        if(isinstance(self.policy, BGPSecCrypt)):
-            self.signing_key = SigningKey.generate(curve=SECP256k1, hashfunc=hashlib.sha256)
-        ###print(f"DEBUG - Key: {self.signing_key}; Policy: {self.policy.name}")
-        
-        if signing_key is not None:
-            self.verifying_key = signing_key.get_verifying_key()
+        self.signing_key: EllipticCurvePrivateKey | None = signing_key
+        self.verifying_key: EllipticCurvePublicKey | None = verifying_key   
+        self.rsa_private_key: RSAPrivateKey | None = rsa_private_key
+        self.rsa_public_key: RSAPublicKey | None = rsa_public_key
+                
 
         # # This is useful for some policies to have knowledge of the graph
         if as_graph is not None:
@@ -147,6 +152,8 @@ class AS(YamlAble):
             *("stubs", "stub", "multihomed", "transit"),
             "signing_key",
             "verifying_key",
+            "rsa_private_key",
+            "rsa_public_key",
         )
 
     def __str__(self):
@@ -214,6 +221,8 @@ class AS(YamlAble):
             "policy": self.policy,
             "signing_key": self.signing_key,
             "verifying_key": self.verifying_key,
+            "rsa_private_key":self.rsa_private_key,
+            "rsa_public_key":self.rsa_public_key,
         }
 
     @classmethod
@@ -242,10 +251,23 @@ class AS(YamlAble):
     def policy(self, value: Optional["Policy"]) -> None:
         self._policy = value
 
-        if isinstance(value, BGPSecCrypt) and self.signing_key is None:
-            self.signing_key = SigningKey.generate(curve=SECP256k1, hashfunc=hashlib.sha256)
-            ###print(f"DEBUG - Key: {self.signing_key}; Policy: {self.policy}")
-            self.verifying_key = self.signing_key.get_verifying_key()
+        """
+        Doing the Key gen through the policy would be cleaner here to avoid the imports but I had problems doing so due to the simulation structure so i kept it this way for now unfortunatly
+        """
+        if isinstance(value, BGPSecRSA):
+            if self.rsa_private_key is None:
+                self.rsa_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                self.rsa_public_key = self.rsa_private_key.public_key()
+
+        elif isinstance(value, BGPSecCrypt):          ### elif since otherwise BGPsecRSA also create Keys for ECDSA which would not be useful and just create unnessecary overhead
+            if self.signing_key is None:
+                self.signing_key = ec.generate_private_key(ec.SECP256R1())
+                self.verifying_key = self.signing_key.public_key()
+        
+
+        
+
+        
 
 # Needed for mypy type hinting
 __all__ = ["AS"]
